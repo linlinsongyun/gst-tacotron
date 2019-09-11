@@ -28,15 +28,24 @@ def preprocess_blizzard2013(args):
   metadata = blizzard2013.build_from_path(in_dir, out_dir, args.num_workers, tqdm=tqdm)
   write_metadata(metadata, out_dir)
 
-def write_metadata(metadata, out_dir):
-  with open(os.path.join(out_dir, 'train.txt'), 'w', encoding='utf-8') as f:
-    for m in metadata:
-      f.write('|'.join([str(x) for x in m]) + '\n')
-  frames = sum([m[2] for m in metadata])
-  hours = frames * hparams.frame_shift_ms / (3600 * 1000)
-  print('Wrote %d utterances, %d frames (%.2f hours)' % (len(metadata), frames, hours))
-  print('Max input length:  %d' % max(len(m[3]) for m in metadata))
-  print('Max output length: %d' % max(m[2] for m in metadata))
+def write_metadata(agrs):
+  out_dir = os.path.join(args.base_dir, agrs.output)
+  with open(os.path.join(out_dir, agrs.save_txt), 'w', encoding='utf-8') as f:
+    for ppgs in os.listdir(args.ppgs_dir):
+      ppgs_name = ppgs.split('.npy')[0]
+      mel = ppgs
+      mel_path = os.path.join(args.mel_dir, mel)
+      lpc32 = pps_name + '.mel.npy'
+      lpc32_path = os.path.join(args.lpc32_dir, lpc32)
+      if os.path.isfile(lpc32_path):
+        if os.path.isfile(mel_path):
+          spk=ppgs[:4]
+          f.write('%s|%s|%s|%s\n'%(ppgs, mel, lpc32, spk))
+      else:
+        os.system('echo %s>>wrng.txt'%lpc32)
+        print('%s is none'%lpc32_path)
+    
+
 
 
 def main():
@@ -46,12 +55,13 @@ def main():
   parser.add_argument('--dataset', required=True, choices=['blizzard', 'ljspeech', 'blizzard2013'])
   parser.add_argument('--num_workers', type=int, default=cpu_count())
   args = parser.parse_args()
-  if args.dataset == 'blizzard':
-    preprocess_blizzard(args)
-  elif args.dataset == 'ljspeech':
-    preprocess_ljspeech(args)
-  elif args.dataset == 'blizzard2013':
-    preprocess_blizzard2013(args)
+  write_meta(args)
+  #if args.dataset == 'blizzard':
+  #  preprocess_blizzard(args)
+  #elif args.dataset == 'ljspeech':
+  #  preprocess_ljspeech(args)
+  #elif args.dataset == 'blizzard2013':
+  #  preprocess_blizzard2013(args)
 
 
 if __name__ == "__main__":
