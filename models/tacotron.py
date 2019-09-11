@@ -15,7 +15,7 @@ class Tacotron():
     self._hparams = hparams
 
 
-  def initialize(self, inputs, input_lengths, mel_targets=None, linear_targets=None, reference_mel=None):
+  def initialize(self, inputs, input_lengths, reference_mel=None, linear_targets=None):
     '''Initializes the model for inference.
 
     Sets "mel_outputs", "linear_outputs", and "alignments" fields.
@@ -33,16 +33,16 @@ class Tacotron():
         spectrogram. Only needed for training.
     '''
     with tf.variable_scope('inference') as scope:
-      is_training = linear_targets is not None
-      is_teacher_force_generating = mel_targets is not None
+      is_training = lpc_targets is not None
+      is_teacher_force_generating = lpc_targets is not None
       batch_size = tf.shape(inputs)[0]
       hp = self._hparams
 
       # Embeddings
-      embedding_table = tf.get_variable(
-        'text_embedding', [len(symbols), hp.embed_depth], dtype=tf.float32,
-        initializer=tf.truncated_normal_initializer(stddev=0.5))
-      embedded_inputs = tf.nn.embedding_lookup(embedding_table, inputs)           # [N, T_in, 256]
+      #embedding_table = tf.get_variable(
+      #  'text_embedding', [len(symbols), hp.embed_depth], dtype=tf.float32,
+      #  initializer=tf.truncated_normal_initializer(stddev=0.5))
+      #embedded_inputs = tf.nn.embedding_lookup(embedding_table, inputs)           # [N, T_in, 256]
       
       if hp.use_gst:
         #Global style tokens (GST)
@@ -52,11 +52,9 @@ class Tacotron():
         self.gst_tokens = gst_tokens
  
       # Encoder
-      prenet_outputs = prenet(embedded_inputs, is_training)                       # [N, T_in, 128]
+      prenet_outputs = prenet(inputs, is_training)                       # [N, T_in, 128]
       encoder_outputs = encoder_cbhg(prenet_outputs, input_lengths, is_training)  # [N, T_in, 256]
       
-      if is_training:
-        reference_mel = mel_targets
 
       if reference_mel is not None:
         # Reference encoder
@@ -110,11 +108,11 @@ class Tacotron():
         ], state_is_tuple=True)                                                  # [N, T_in, 256]
 
       # Project onto r mel spectrograms (predict r outputs at each RNN step):
-      output_cell = OutputProjectionWrapper(decoder_cell, hp.num_mels * hp.outputs_per_step)
+      output_cell = OutputProjectionWrapper(decoder_cell, hp.num_lpc * hp.outputs_per_step)
       decoder_init_state = output_cell.zero_state(batch_size=batch_size, dtype=tf.float32)
 
       if is_training or is_teacher_force_generating:
-        helper = TacoTrainingHelper(inputs, mel_targets, hp)
+        helper = TacoTrainingHelper(inputs, lpc_targets, hp)
       else:
         helper = TacoTestHelper(batch_size, hp)
 
@@ -123,27 +121,23 @@ class Tacotron():
         maximum_iterations=hp.max_iters)                                        # [N, T_out/r, M*r]
 
       # Reshape outputs to be one output per entry
-      mel_outputs = tf.reshape(decoder_outputs, [batch_size, -1, hp.num_mels]) # [N, T_out, M]
+      lpc_outputs = tf.reshape(decoder_outputs, [batch_size, -1, hp.num_lpc]) # [N, T_out, M]
 
-      # Add post-processing CBHG:
-      post_outputs = post_cbhg(mel_outputs, hp.num_mels, is_training)           # [N, T_out, 256]
-      linear_outputs = tf.layers.dense(post_outputs, hp.num_freq)               # [N, T_out, F]
+    
 
       # Grab alignments from the final decoder state:
       alignments = tf.transpose(final_decoder_state[0].alignment_history.stack(), [1, 2, 0])
 
       self.inputs = inputs
       self.input_lengths = input_lengths
-      self.mel_outputs = mel_outputs
+      self.lpc_outputs = lpc_outputs
       self.encoder_outputs = encoder_outputs
       self.style_embeddings = style_embeddings
-      self.linear_outputs = linear_outputs
       self.alignments = alignments
-      self.mel_targets = mel_targets
-      self.linear_targets = linear_targets
+      self.lpc_targets = lpc_targets
       self.reference_mel = reference_mel
       log('Initialized Tacotron model. Dimensions: ')
-      log('  text embedding:          %d' % embedded_inputs.shape[-1])
+      log('  ppgs . input:            %d' % inputs.shape[-1])
       log('  style embedding:         %d' % style_embeddings.shape[-1])
       log('  prenet out:              %d' % prenet_outputs.shape[-1])
       log('  encoder out:             %d' % encoder_outputs.shape[-1])
@@ -151,18 +145,15 @@ class Tacotron():
       log('  concat attn & out:       %d' % concat_cell.output_size)
       log('  decoder cell out:        %d' % decoder_cell.output_size)
       log('  decoder out (%d frames):  %d' % (hp.outputs_per_step, decoder_outputs.shape[-1]))
-      log('  decoder out (1 frame):   %d' % mel_outputs.shape[-1])
-      log('  postnet out:             %d' % post_outputs.shape[-1])
-      log('  linear out:              %d' % linear_outputs.shape[-1])
+      log('  decoder out (1 frame):   %d' % lpc_outputs.shape[-1])
 
 
   def add_loss(self):
     '''Adds loss to the model. Sets "loss" field. initialize must have been called.'''
     with tf.variable_scope('loss') as scope:
       hp = self._hparams
-      self.mel_loss = tf.reduce_mean(tf.abs(self.mel_targets - self.mel_outputs))
-      self.linear_loss = tf.reduce_mean(tf.abs(self.linear_targets - self.linear_outputs))
-      self.loss = self.mel_loss + self.linear_loss
+      self.lpc_loss = tf.reduce_mean(tf.abs(self.lpc_targets - self.lpc_outputs))
+      self.loss = self.mel_loss
 
 
   def add_optimizer(self, global_step):
