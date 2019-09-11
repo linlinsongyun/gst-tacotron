@@ -11,7 +11,7 @@ import traceback
 from datasets.datafeeder import DataFeeder
 from hparams import hparams, hparams_debug_string
 from models import create_model
-from text import sequence_to_text
+
 from util import audio, infolog, plot, ValueWindow
 log = infolog.log
 
@@ -25,12 +25,9 @@ def get_git_commit():
 
 def add_stats(model):
   with tf.variable_scope('stats') as scope:
-    tf.summary.histogram('linear_outputs', model.linear_outputs)
-    tf.summary.histogram('linear_targets', model.linear_targets)
-    tf.summary.histogram('mel_outputs', model.mel_outputs)
-    tf.summary.histogram('mel_targets', model.mel_targets)
-    tf.summary.scalar('loss_mel', model.mel_loss)
-    tf.summary.scalar('loss_linear', model.linear_loss)
+    tf.summary.histogram('lpc_outputs', model.lpc_outputs)
+    tf.summary.histogram('lpc_targets', model.lpc_targets)
+    tf.summary.scalar('loss_mel', model.lpc_loss)
     tf.summary.scalar('learning_rate', model.learning_rate)
     tf.summary.scalar('loss', model.loss)
     gradient_norms = [tf.norm(grad) for grad in model.gradients]
@@ -61,7 +58,7 @@ def train(log_dir, args):
   global_step = tf.Variable(0, name='global_step', trainable=False)
   with tf.variable_scope('model') as scope:
     model = create_model(args.model, hparams)
-    model.initialize(feeder.inputs, feeder.input_lengths, feeder.mel_targets, feeder.linear_targets)
+    model.initialize(feeder.inputs, feeder.input_lengths, feeder.mel_targets, feeder.lpc_targets)
     model.add_loss()
     model.add_optimizer(global_step)
     stats = add_stats(model)
@@ -70,6 +67,7 @@ def train(log_dir, args):
   step = 0
   time_window = ValueWindow(100)
   loss_window = ValueWindow(100)
+  # the num of model saved at a time
   saver = tf.train.Saver(max_to_keep=5, keep_checkpoint_every_n_hours=2)
 
   # Train!
@@ -109,13 +107,13 @@ def train(log_dir, args):
           log('Saving checkpoint to: %s-%d' % (checkpoint_path, step))
           saver.save(sess, checkpoint_path, global_step=step)
           log('Saving audio and alignment...')
-          input_seq, spectrogram, alignment = sess.run([
-            model.inputs[0], model.linear_outputs[0], model.alignments[0]])
-          waveform = audio.inv_spectrogram(spectrogram.T)
-          audio.save_wav(waveform, os.path.join(log_dir, 'step-%d-audio.wav' % step))
+          #input_seq, spectrogram, alignment = sess.run([
+          #  model.inputs[0], model.linear_outputs[0], model.alignments[0]])
+          #waveform = audio.inv_spectrogram(spectrogram.T)
+          #audio.save_wav(waveform, os.path.join(log_dir, 'step-%d-audio.wav' % step))
           plot.plot_alignment(alignment, os.path.join(log_dir, 'step-%d-align.png' % step),
             info='%s, %s, %s, step=%d, loss=%.5f' % (args.model, commit, time_string(), step, loss))
-          log('Input: %s' % sequence_to_text(input_seq))
+          #log('Input: %s' % sequence_to_text(input_seq))
 
     except Exception as e:
       log('Exiting due to exception: %s' % e, slack=True)
@@ -141,10 +139,9 @@ def main():
   parser.add_argument('--git', action='store_true', help='If set, verify that the client is clean.')
   args = parser.parse_args()
   os.environ['TF_CPP_MIN_LOG_LEVEL'] = str(args.tf_log_level)
-  run_name = args.name or args.model
-  log_dir = os.path.join(args.base_dir, 'logs-%s' % run_name)
+  log_dir = os.path.join(args.base_dir, args.name)
   os.makedirs(log_dir, exist_ok=True)
-  infolog.init(os.path.join(log_dir, 'train.log'), run_name, args.slack_url)
+  infolog.init(os.path.join(log_dir, 'train.log'), agrs.name, args.slack_url)
   hparams.parse(args.hparams)
   train(log_dir, args)
 
